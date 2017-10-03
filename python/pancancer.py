@@ -29,8 +29,6 @@ EMAIL_SCOPE = 'https://www.googleapis.com/auth/userinfo.email'
 # where a default credentials file will be stored for use by the endpoints
 DEFAULT_STORAGE_FILE = os.path.join(os.path.expanduser("~"), '.isb_credentials')
 
-service = get_unauthorized_service(api='isb_cgc_tcga_api')
-run_samples_python()
 def load_cnv_file(input):
   intervals = hg19.interval_list()
   for line in open(input):
@@ -352,3 +350,5 @@ def pull_metadata_files(samples):
       if 'gs' not in samples[sample][type][t]:
         print 'Failed to find gs for %s %s' % (sample,t)
 
+#service = get_unauthorized_service(api='isb_cgc_tcga_api')
+run_samples_python()
