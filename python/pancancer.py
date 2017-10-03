@@ -72,7 +72,8 @@ def run_samples_python(file = '/home/namphuon/programs/pancancer/output/all_bam_
       os.system("python /home/namphuon/programs/docker_env/AmpliconArchitect/src/AmpliconArchitect.py --downsample 10 --bam %s/%s.bam --bed %s/%s.bed --out %s/%s/%s > %s/%s/log.%s 2>&1" % (path,line[0],path,line[0],path,line[0],line[0], path, line[0], line[0]))
       os.system('gsutil cp %s/%s/* gs://aa-data-repo/%s/' % (path,line[0],output_dir))
       os.system('rm -rf %s/' % path)
-    except subprocess.CalledProcessError as error
+    except:
+      os.system('rm -rf %s/' % path)    
       continue
   
 def run_samples(file = '/home/namphuon/programs/pancancer/output/all_bam_cnv.csv', filter = 'TCGA-GBM', min_cnv = 3, min_size = 50000):
