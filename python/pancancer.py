@@ -45,7 +45,7 @@ def run_samples_python(file = '/home/namphuon/programs/pancancer/output/all_bam_
     output_dir = "output/TCGA/%s/%s/%s" % (line[1],line[0],'tumor')
     try:
       res = subprocess.check_output(['gsutil','ls', 'gs://aa-data-repo/%s/%s_summary.txt' % (output_dir,line[0])],stderr=subprocess.STDOUT)
-      if len(res.strip()) == 0:
+      if len(res.strip()) != 0:
         continue
     except subprocess.CalledProcessError as error:
       print "Try to analyze %s" % line[0]
@@ -231,12 +231,6 @@ def get_legacy_samples(file='/home/namphuon/data/dbGap/legacy.bam.json'):
   for bam in bams:      
     samples.add(bam['cases'][0]['submitter_id'])
   return samples
-
-def get_unauthorized_service(api = 'isb_cgc_tcga_api'):
-    version = 'v3'
-    site = "https://api-dot-isb-cgc.appspot.com"
-    discovery_url = '%s/_ah/api/discovery/v1/apis/%s/%s/rest' % (site, api, version)
-    return build(api, version, discoveryServiceUrl=discovery_url, http=httplib2.Http())
     
 def prepare_tcga_data(bam_csv="/home/namphuon/data/dbGap/metadata/bam.csv", cnv_csv="/home/namphuon/data/dbGap/metadata/masked.cnv.csv"):
   samples = {}
@@ -350,5 +344,11 @@ def pull_metadata_files(samples):
       if 'gs' not in samples[sample][type][t]:
         print 'Failed to find gs for %s %s' % (sample,t)
 
-#service = get_unauthorized_service(api='isb_cgc_tcga_api')
+def get_unauthorized_service(api = 'isb_cgc_tcga_api'):
+    version = 'v3'
+    site = "https://api-dot-isb-cgc.appspot.com"
+    discovery_url = '%s/_ah/api/discovery/v1/apis/%s/%s/rest' % (site, api, version)
+    return build(api, version, discoveryServiceUrl=discovery_url, http=httplib2.Http())
+
+service = get_unauthorized_service(api='isb_cgc_tcga_api')
 run_samples_python()
