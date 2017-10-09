@@ -17,6 +17,7 @@ import pprint
 
 
 PANCANCER_DIR=os.environ['PANCANCER']
+TEMP_DIR= os.environ['TEMP_DIR'] if 'TEMP_DIR' in os.environ else None
 bam_json_file = "%s/metadata/hnsc.bam.json" % PANCANCER_DIR
 cnv_json_file = "%s/metadata/hnsc.masked_cnv.json" % PANCANCER_DIR
 
@@ -38,7 +39,8 @@ def load_cnv_file(input):
 
 def run_samples_python(file = '/home/namphuon/programs/pancancer/output/all_bam_cnv.csv', filter = 'TCGA-GBM', min_cnv = 3, min_size = 50000):
   lines = [line.strip().split('\t') for line in open(file)]
-  for line in lines:
+  counter = -1
+  for line in lines[::-1]:
     if line[1] != filter:
       continue
     #Check to see if sample has been run
@@ -50,24 +52,27 @@ def run_samples_python(file = '/home/namphuon/programs/pancancer/output/all_bam_
     except subprocess.CalledProcessError as error:
       print "Try to analyze %s" % line[0]
       #Analyze this sample 
-      
-    #Check to see if CNV file has been downloaded
+    #Check to see if CNV file has been downloaded    
+    counter+=1    
+    if counter % 4 != int(sys.argv[1]):
+      continue
     try:
       res = subprocess.check_output(['gsutil','cat', 'gs://aa-data-repo/TCGA/%s/%s/tumor/%s.hg19.%s_%s.masked_cnv.bed' % (line[1],line[0],line[0],min_cnv,min_size)],stderr=subprocess.STDOUT)
       if len(res.strip()) == 0:
         continue
     except subprocess.CalledProcessError as error:
-      continue         
-    path = tempfile.mkdtemp()  
+      continue      
+    path = tempfile.mkdtemp(dir=TEMP_DIR)  
     
     #Copy files from path
-    print "Copying files"    
+    print "Copying files" 
     try:
       res = subprocess.check_output(['gsutil','cp', 'gs://aa-data-repo/TCGA/%s/%s/tumor/%s.hg19.%s_%s.masked_cnv.bed' % (line[1],line[0],line[0],min_cnv,min_size), '%s/%s.bed' % (path,line[0])],stderr=subprocess.STDOUT)
       res = subprocess.check_output(['gsutil','cp', '%s.bai' % line[3], '%s/%s.bam.bai' % (path,line[0])],stderr=subprocess.STDOUT)
       res = subprocess.check_output(['gsutil','cp', '%s' % line[3], '%s/%s.bam' % (path,line[0])],stderr=subprocess.STDOUT)
       os.system('mkdir -p %s/%s/' % (path,line[0]))
-      os.system("python /home/namphuon/programs/docker_env/AmpliconArchitect/src/AmpliconArchitect.py --downsample 10 --bam %s/%s.bam --bed %s/%s.bed --out %s/%s/%s > %s/%s/log.%s 2>&1" % (path,line[0],path,line[0],path,line[0],line[0], path, line[0], line[0]))
+      #os.system("python /home/namphuon/programs/docker_env/AmpliconArchitect/src/AmpliconArchitect.py --ref GRCh37 --downsample 10 --bam %s/%s.bam --bed %s/%s.bed --out %s/%s/%s > %s/%s/log.%s 2>&1" % (path,line[0],path,line[0],path,line[0],line[0], path, line[0], line[0]))
+      os.system("python /pedigree2/projects/namphuon/programs/docker_env/AmpliconArchitect/src/AmpliconArchitect.py --ref GRCh37 --downsample 10 --bam %s/%s.bam --bed %s/%s.bed --out %s/%s/%s > %s/%s/log.%s 2>&1" % (path,line[0],path,line[0],path,line[0],line[0], path, line[0], line[0]))
       os.system('gsutil cp %s/%s/* gs://aa-data-repo/%s/' % (path,line[0],output_dir))
       os.system('rm -rf %s/' % path)
     except:
@@ -81,15 +86,24 @@ def run_samples(file = '/home/namphuon/programs/pancancer/output/all_bam_cnv.csv
   for line in lines:
     if line[1] != filter:
       continue
+    output_dir = "output/TCGA/%s/%s/%s" % (line[1],line[0],'tumor')      
+    try:
+      res = subprocess.check_output(['gsutil','ls', 'gs://aa-data-repo/%s/%s_summary.txt' % (output_dir,line[0])],stderr=subprocess.STDOUT)
+      if len(res.strip()) != 0:
+        continue
+    except subprocess.CalledProcessError as error:
+      print "Try to analyze %s" % line[0]
+      #Analyze this sample 
     #Check to see if CNV file has been downloaded
     try:
       res = subprocess.check_output(['gsutil','cat', 'gs://aa-data-repo/TCGA/%s/%s/tumor/%s.hg19.%s_%s.masked_cnv.bed' % (line[1],line[0],line[0],min_cnv,min_size)],stderr=subprocess.STDOUT)
       if len(res.strip()) == 0:
         continue
     except subprocess.CalledProcessError as error:
-      continue 
-    output_dir = "output/TCGA/%s/%s/%s" % (line[1],line[0],'tumor')
-    output.write("dsub --image us.gcr.io/aa-test-175718/aa --preemptible --project aa-test-175718 --zones \"us-west1-*\" --logging gs://aa-data-repo/%s/logging/ \\\n\t--output LOG_FILE=gs://aa-data-repo/%s/log \\\n\t --input-recursive DATA_REPO=gs://aa-data-repo/data_repo/ \\\n\t--output-recursive OUTPUT_DIR=gs://aa-data-repo/%s --disk-size 750 \\\n\t--input SH=%s BAM_FILE=%s BAI_FILE=%s.bai BED_FILE=gs://aa-data-repo/TCGA/%s/%s/tumor/%s.hg19.%s_%s.masked_cnv.bed \\\n\t--env PREFIX=%s --command 'sh ${SH}'\n" %  (output_dir,output_dir,output_dir,"gs://aa-data-repo/data_repo/test.sh",line[3],line[3],line[1],line[0],line[0],min_cnv,min_size,line[0]))
+      continue       
+    res = subprocess.check_output(['gsutil','ls', '-lh', line[3]],stderr=subprocess.STDOUT).strip()
+    mem = int(float(res.split(' ')[0])+25)
+    output.write("dsub --image us.gcr.io/aa-test-175718/aa --preemptible --project aa-test-175718 --zones \"us-west1-*\" --logging gs://aa-data-repo/%s/logging/ \\\n\t--output LOG_FILE=gs://aa-data-repo/%s/log \\\n\t --input-recursive DATA_REPO=gs://aa-data-repo/data_repo/ \\\n\t--output-recursive OUTPUT_DIR=gs://aa-data-repo/%s --disk-size %d \\\n\t--input SH=%s BAM_FILE=%s BAI_FILE=%s.bai BED_FILE=gs://aa-data-repo/TCGA/%s/%s/tumor/%s.hg19.%s_%s.masked_cnv.bed \\\n\t--env PREFIX=%s --command 'sh ${SH}'\n" %  (output_dir,output_dir,output_dir, mem,"gs://aa-data-repo/data_repo/test.sh",line[3],line[3],line[1],line[0],line[0],min_cnv,min_size,line[0]))
   output.close()  
           
 def prepare_samples(file = '/home/namphuon/programs/pancancer/output/all_bam_cnv.csv', filter = 'TCGA-GBM', min_cnv = 3, min_size = 50000):
@@ -350,5 +364,6 @@ def get_unauthorized_service(api = 'isb_cgc_tcga_api'):
     discovery_url = '%s/_ah/api/discovery/v1/apis/%s/%s/rest' % (site, api, version)
     return build(api, version, discoveryServiceUrl=discovery_url, http=httplib2.Http())
 
-service = get_unauthorized_service(api='isb_cgc_tcga_api')
-run_samples_python()
+#service = get_unauthorized_service(api='isb_cgc_tcga_api')
+#run_samples_python()
+run_samples_python(file='/pedigree2/projects/namphuon/bin/perl/scripts/all_bam_cnv.csv')
