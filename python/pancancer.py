@@ -76,6 +76,7 @@ def run_samples_python(file = '/home/namphuon/programs/pancancer/output/all_bam_
       os.system('gsutil cp %s/%s/* gs://aa-data-repo/%s/' % (path,line[0],output_dir))
       os.system('rm -rf %s/' % path)
     except:
+      print "Failed %s" " ".join(['gsutil','cp', '%s' % line[3], '%s/%s.bam' % (path,line[0])])
       os.system('rm -rf %s/' % path)    
       continue
   
