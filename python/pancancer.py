@@ -157,6 +157,7 @@ def collect_amplicons(complete):
 def parse_segment_file(segment_file):
   input = open(segment_file, 'r')
   amplicons = hg19.interval_list()
+  line = input.next()
   for line in input:
     res = line.strip().split(',')
     amplicons.append(hg19.interval(res[3],info={'sample':res[0],'disease':res[1],'id':res[2]}))
@@ -164,18 +165,18 @@ def parse_segment_file(segment_file):
 
 def samtools_flagstat(rna_bam_file, output_file, threads=4):
   os.system('samtools flagstat -@ %d  %s > %s 2>&1'% (threads, rna_bam_file, output_file))
-
-  data = {}
-  for k in complete.keys():
-    res=complete[k]
-    tumor_type = res[key_map['WGS__sampleType']]
-    disease_type = res[key_map['WGS__cases__project__project_id']]
-    out_dir = '%s/analyses/tumor/%s/min_cnv1/%s/'  % (PANCANCER_DIR, disease_type, res[key_map['outdir_basename']])          
-    if tumor_type != 'TP':
-      continue
-    os.system('')
-    rna_bam_file = res[key_map['rnaseq_gsc']]
-    rna_bam = pysam.Samfile(rna_bam_file, 'rb')     
+# 
+#   data = {}
+#   for k in complete.keys():
+#     res=complete[k]
+#     tumor_type = res[key_map['WGS__sampleType']]
+#     disease_type = res[key_map['WGS__cases__project__project_id']]
+#     out_dir = '%s/analyses/tumor/%s/min_cnv1/%s/'  % (PANCANCER_DIR, disease_type, res[key_map['outdir_basename']])          
+#     if tumor_type != 'TP':
+#       continue
+#     os.system('')
+#     rna_bam_file = res[key_map['rnaseq_gsc']]
+#     rna_bam = pysam.Samfile(rna_bam_file, 'rb')     
     
 
 def compute_egf_mortality(keeper, complete):

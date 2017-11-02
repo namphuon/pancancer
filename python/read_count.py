@@ -49,7 +49,7 @@ def read_count(bam_file, amplicons, output_file):
 
 if __name__ == '__main__': 
   options = parse_args()
-  if options.flagstat_file != '':
-    pancancer.samtools_flagstat(options.bam_file, options.flagstat_file, threads=1)
   amplicons = pancancer.parse_segment_file(options.segment_file)
+  if options.flagstat_file != '':
+    pancancer.samtools_flagstat(options.bam_file, options.flagstat_file, threads=1)  
   read_count(options.bam_file, amplicons, options.output_file)
