@@ -153,7 +153,18 @@ def collect_amplicons(complete):
       continue    
     output.write('%s,%s,%s\n' % (id, disease, rna_bam_file))
   output.close()
-  
+
+def parse_segment_file(segment_file):
+  input = open(segment_file, 'r')
+  amplicons = hg19.interval_list()
+  for line in input:
+    res = line.strip().split(',')
+    amplicons.append(hg19.interval(res[3],info={'sample':res[0],'disease':res[1],'id':res[2]}))
+  return amplicons
+
+def samtools_flagstat(rna_bam_file, output_file, threads=4):
+  os.system('samtools flagstat -@ %d  %s > %s 2>&1'% (threads, rna_bam_file, output_file))
+
   data = {}
   for k in complete.keys():
     res=complete[k]
