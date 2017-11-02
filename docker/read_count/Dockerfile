@@ -3,7 +3,7 @@ FROM ubuntu
 
 # Set the working directory to /app
 WORKDIR /home/
-ADD hg19util.py /home/
+ADD *.py /home/
 RUN mkdir -p /home/output/
 RUN mkdir -p /home/input/
 
