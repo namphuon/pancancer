@@ -6,7 +6,6 @@ WORKDIR /home/
 ADD *.py /home/
 RUN mkdir -p /home/output/
 RUN mkdir -p /home/input/
-
 #Download libraries for AA
 RUN apt-get update && apt-get install -y
 RUN apt-get install python-dev gfortran python-numpy python-scipy python-matplotlib python-pip zlib1g-dev samtools -y
@@ -25,3 +24,4 @@ RUN pip install -U crcmod
 RUN pip install --upgrade google-api-python-client
 RUN pip install requests
 RUN ls
+RUN echo "PANCANCER=/home/" >> ~/.bashrc
