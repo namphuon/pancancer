@@ -3,6 +3,10 @@ FROM ubuntu
 
 # Set the working directory to /app
 WORKDIR /home/
+ADD hg19util.py /home/
+RUN mkdir -p /home/output/
+RUN mkdir -p /home/input/
+
 #Download libraries for AA
 RUN apt-get update && apt-get install -y
 RUN apt-get install python-dev gfortran python-numpy python-scipy python-matplotlib python-pip zlib1g-dev samtools -y
