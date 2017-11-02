@@ -79,7 +79,7 @@ def get_rnaseq_bucket(data_map, service, key_map):
       tmp.append(cases)            
       keeper[d[0]] = tmp
   idx = 0
-    complete = copy.copy(keeper)
+  complete = copy.copy(keeper)
   for k in keeper.keys():
     d = keeper[k]
     if not os.path.exists('%s/analyses/tumor/%s/min_cnv1/%s/output/finish_flag.txt'  % (PANCANCER_DIR, d[key_map['WGS__cases__project__project_id']], d[key_map['outdir_basename']])) or d[key_map['aa_finished']] != "success":
@@ -673,12 +673,12 @@ def load_fpkm(file,names=Set()):
   return fpkm
 
 
-service = get_unauthorized_service(api='isb_cgc_tcga_api')
-(data_map, key_map) = load_meta_file()
-(complete, keeper) = get_rnaseq_bucket(data_map, service, key_map)
+#service = get_unauthorized_service(api='isb_cgc_tcga_api')
+#(data_map, key_map) = load_meta_file()
+#(complete, keeper) = get_rnaseq_bucket(data_map, service, key_map)
 #run_samples_python()
-run_samples_python(file='/pedigree2/projects/namphuon/bin/perl/scripts/all_bam_cnv.csv')
+#run_samples_python(file='/pedigree2/projects/namphuon/bin/perl/scripts/all_bam_cnv.csv')
 #compute_fpkm_cnv()
 
-  rna_bam_file = "gs://5aa919de-0aa0-43ec-9ec3-288481102b6d/tcga/GBM/RNA/RNA-Seq/UNC-LCCC/ILLUMINA/UNCID_1534748.d8164b02-4b3c-454d-945b-2838edb1b5b1.sorted_genome_alignments.bam"
-  rna_bam = pysam.Samfile(rna_bam_file, 'rb')      
+#   rna_bam_file = "gs://5aa919de-0aa0-43ec-9ec3-288481102b6d/tcga/GBM/RNA/RNA-Seq/UNC-LCCC/ILLUMINA/UNCID_1534748.d8164b02-4b3c-454d-945b-2838edb1b5b1.sorted_genome_alignments.bam"
+#   rna_bam = pysam.Samfile(rna_bam_file, 'rb')      
