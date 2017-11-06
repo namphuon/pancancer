@@ -788,10 +788,10 @@ def load_fpkm(file,names=Set()):
   return fpkm
 
 
-service = get_unauthorized_service(api='isb_cgc_tcga_api')
-(data_map, key_map) = load_meta_file()
-(complete, keeper) = get_rnaseq_bucket(data_map, service, key_map)
-run_read_count(complete, disease='TCGA-GBM')
+#service = get_unauthorized_service(api='isb_cgc_tcga_api')
+#(data_map, key_map) = load_meta_file()
+#(complete, keeper) = get_rnaseq_bucket(data_map, service, key_map)
+#run_read_count(complete, disease='TCGA-GBM')
 #run_samples_python()
 #run_samples_python(file='/pedigree2/projects/namphuon/bin/perl/scripts/all_bam_cnv.csv')
 #compute_fpkm_cnv()
