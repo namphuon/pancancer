@@ -37,7 +37,8 @@ DEFAULT_STORAGE_FILE = os.path.join(os.path.expanduser("~"), '.isb_credentials')
 def load_meta_file():
   data_map = dict()
   for disease in ['TCGA-GBM', 'TCGA-LGG']:
-    file="/home/namphuon/programs/pancancer/analyses/tumor/%s/min_cnv1/file_map.txt" % disease
+  #for disease in ['TCGA-BRCA']:
+    file="%s/analyses/tumor/%s/min_cnv1/file_map.txt" % (PANCANCER_DIR, disease)
     input = open(file, 'r')
     header=input.next().split('\t')
     idx = -1
@@ -51,6 +52,37 @@ def load_meta_file():
       data_map.setdefault(res[0],res)
     #Find if the file has an RNA-seq file
   return (data_map, key_map)
+
+def run_read_count(complete, disease='TCGA-BRCA'):
+  output = open('%s/scripts/counter.%s.sh' % (PANCANCER_DIR,disease), 'w')
+  keys = complete.keys()
+  random.shuffle(keys)
+  for k in keys:
+    res=complete[k]
+    tumor_type = res[key_map['WGS__sampleType']]
+    disease_type = res[key_map['WGS__cases__project__project_id']]
+    out_dir = 'analyses/tumor/%s/min_cnv1/%s'  % (disease_type, res[key_map['outdir_basename']])          
+    if tumor_type != 'TP':
+      continue
+    rna_bam_file = res[key_map['rnaseq_gsc']]
+    try:
+      res = subprocess.check_output(['gsutil','ls', '-lh', 'gs://aa-data-repo/%s/read_counts.csv' % (out_dir)],stderr=subprocess.STDOUT)      
+      if len(res.strip()) != 0 and float(res.strip().split(' ')[0]) > 0:
+        continue
+    except subprocess.CalledProcessError as error:
+      print "Try to analyze %s" % out_dir
+    res = subprocess.check_output(['gsutil','ls', '-lh', rna_bam_file],stderr=subprocess.STDOUT).strip()
+    mem = int(float(res.split(' ')[0])+5)
+    output.write("dsub --image us.gcr.io/aa-test-175718/read_count --preemptible --project aa-test-175718 --zones \"us-west1-*\" --logging gs://aa-data-repo/%s/logging/ \\\n\t--output LOG_FILE=gs://aa-data-repo/%s/log \\\n\t \\\n\t--output-recursive OUTPUT_DIR=gs://aa-data-repo/%s --disk-size %d \\\n\t--input SEGMENT_FILE=gs://aa-data-repo/metadata/amplicons.%s.csv BAM_FILE=%s BAI_FILE=%s.bai \\\n\t --command 'python /home/read_count.py -b ${BAM_FILE} -s ${SEGMENT_FILE} -f ${OUTPUT_DIR}/flagstat.csv -o ${OUTPUT_DIR}/read_counts.csv > ${LOG_FILE} 2>&1; samtools flagstat ${BAM_FILE} > ${OUTPUT_DIR}/flagstat.csv'\n" %  (out_dir,out_dir,out_dir, mem, disease, rna_bam_file,rna_bam_file))
+    path = tempfile.mkdtemp(dir=TEMP_DIR) 
+    os.system('gsutil cp %s.bai %s/rna.bam.bai' % (rna_bam_file, path))    
+    os.system('gsutil cp %s %s/rna.bam' % (rna_bam_file, path))
+    os.system("python %s/python/read_count.py -b %s/rna.bam -s %s/metadata/amplicons.%s.csv -f %s/flagstat.csv -o %s/read_counts.csv"  % (PANCANCER_DIR, path, PANCANCER_DIR, disease, path, path))
+    os.system("samtools flagstat %s/rna.bam > %s/flagstat.csv"  % (path, path))    
+    os.system('gsutil cp %s/*.csv gs://aa-data-repo/%s' % (path, out_dir))
+    os.system('rm -rf %s' % path)    
+  output.close()  
+
 
 def get_rnaseq_bucket(data_map, service, key_map):
   keeper = dict()
@@ -109,10 +141,8 @@ def compute_flagstat():
     rna_bam_file = res[key_map['rnaseq_gsc']]      
     for chr in chrs:
       os.system('samtools view -hb %s|samtools flagstat - > %s/%s.flagstat 2>&1' % (rna_bam_file, out_dir, chr))
-      
 
-
-def collect_amplicons(complete):
+def collect_amplicons(complete,disease='TCGA-BRCA'):
   amplicons = hg19.interval_list()
   for k in complete.keys():
     res=complete[k]
@@ -131,7 +161,7 @@ def collect_amplicons(complete):
   amplicons.sort()
   amplicons = hg19.interval_list([a for a in amplicons if a.chrom in chrs])
   
-  output = open('%s/metadata/amplicons.csv' % PANCANCER_DIR,'w')
+  output = open('%s/metadata/amplicons.%s.csv' % (PANCANCER_DIR,disease),'w')
   output.write('Sample,Disease,Amplicon_id,Segment\n')
   for a in amplicons:
     id = a.info['meta'][0]
@@ -141,7 +171,7 @@ def collect_amplicons(complete):
     output.write('%s,%s,%s,%s\n' % (id, disease, amp, seg))
   output.close()
   
-  output = open('%s/metadata/complete.csv' % PANCANCER_DIR,'w')
+  output = open('%s/metadata/complete.%s.csv' % (PANCANCER_DIR,disease),'w')
   output.write('Sample,Disease,Bucket\n')
   for k in complete.keys():
     res=complete[k]
@@ -154,6 +184,75 @@ def collect_amplicons(complete):
     output.write('%s,%s,%s\n' % (id, disease, rna_bam_file))
   output.close()
 
+def read_read_counts(complete, amplicons, disease='TCGA-GBM'):
+  read_counts = dict()
+  for k in complete.keys():
+    res=complete[k]
+    tumor_type = res[key_map['WGS__sampleType']]
+    disease_type = res[key_map['WGS__cases__project__project_id']]
+    out_dir = '%s/analyses/tumor/%s/min_cnv1/%s/'  % (PANCANCER_DIR, disease_type, res[key_map['outdir_basename']])          
+    if tumor_type != 'TP':
+      continue
+    flagstat_file = "%s/flagstat.csv" % (out_dir)
+    read_file = "%s/read_counts.csv" % (out_dir)
+    if not os.path.exists(flagstat_file) or not os.path.exists(read_file):
+      continue
+    flagstat = read_samtools_flagstat(flagstat_file)
+    reads = read_readcounts(read_file)    
+    read_counts[k] = (reads, flagstat)            
+    cnv_bed_file =  '%s/%s.hg19.bed' % (out_dir,res[key_map['WGS__patient_id']])
+    cnv = load_cnv_file(cnv_bed_file)
+    read_counts[k] = (reads, flagstat, cnv)    
+    
+  
+  #Now for each amplicon, determine which samples intersect it so baselines can be determined
+  amps = [a for a in amplicons if a.info['meta'][key_map['WGS__cases__project__project_id']] == disease]
+  comps = dict([(i,v) for (i,v) in complete.items() if v[key_map['WGS__cases__project__project_id']] == disease])
+  sample_amps = {}
+  [sample_amps.setdefault(a.info['meta'][0],hg19.interval_list()).append(a) for a in amps]
+  [v.sort() for v in sample_amps.values()]
+  #Split into samples with and without interval in amplicon for each amplicon, find baseline, compute fold change
+  for a in amps:
+    samples_not_amplicon = [sample for (sample,sample_list) in sample_amps.items() if len(sample_list.intersection([a])) == 0]
+    #Av. read from amplicon region in non-amp samples
+    idx = 0
+    #for s in samples_not_amplicon:
+    #  total_mapped_read = read_counts[s]['flag
+
+def read_readcounts(read_file):
+  read_count_intervals = {}
+  input = open(read_file, 'r')
+  for line in input:
+    res = line.strip().split(',')  
+    foo = read_count_intervals.setdefault("%s_%s" % (res[0],res[2]),{}).setdefault(res[1],res)
+  return read_count_intervals
+  
+def read_samtools_flagstat(flagstat_file):
+  flagstat = {}
+  input = open(flagstat_file,'r')  
+  res = input.next().strip().split(' ')
+  flagstat['total_reads'] = (int(res[0]),int(res[2]))
+  res = input.next().strip().split(' ')
+  res = input.next().strip().split(' ')
+  flagstat['total_mapped'] = (int(res[0]),int(res[2]))
+  res = input.next().strip().split(' ')
+  flagstat['total_paired_sequenced'] = (int(res[0]),int(res[2]))
+  res = input.next().strip().split(' ')
+  flagstat['read1'] = (int(res[0]),int(res[2]))
+  res = input.next().strip().split(' ')
+  flagstat['read2'] = (int(res[0]),int(res[2]))
+  res = input.next().strip().split(' ')
+  flagstat['properly_paired'] = (int(res[0]),int(res[2]))
+  res = input.next().strip().split(' ')
+  flagstat['with_itself_and_mate'] = (int(res[0]),int(res[2]))
+  res = input.next().strip().split(' ')
+  flagstat['singletons'] = (int(res[0]),int(res[2]))
+  res = input.next().strip().split(' ')
+  flagstat['mate_to_diff_chr'] = (int(res[0]),int(res[2]))
+  res = input.next().strip().split(' ')
+  flagstat['mate_to_diff_chr_high_q'] = (int(res[0]),int(res[2]))
+  return flagstat    
+
 def parse_segment_file(segment_file):
   input = open(segment_file, 'r')
   amplicons = hg19.interval_list()
@@ -163,8 +262,8 @@ def parse_segment_file(segment_file):
     amplicons.append(hg19.interval(res[3],info={'sample':res[0],'disease':res[1],'id':res[2]}))
   return amplicons
 
-def samtools_flagstat(rna_bam_file, output_file, threads=4):
-  os.system('samtools flagstat -@ %d  %s > %s 2>&1'% (threads, rna_bam_file, output_file))
+def samtools_flagstat(bam_file, output_file, threads=4):
+  os.system('samtools flagstat -@ %d  %s > %s 2>&1'% (threads, bam_file, output_file))
 # 
 #   data = {}
 #   for k in complete.keys():
@@ -179,14 +278,15 @@ def samtools_flagstat(rna_bam_file, output_file, threads=4):
 #     rna_bam = pysam.Samfile(rna_bam_file, 'rb')     
     
 
-def compute_egf_mortality(keeper, complete):
+def compute_egf_mortality(keeper, complete, disease='TCGA-BRCA'):
   egfr = hg19.interval_list([g for g in hg19.gene_list if g.info['Name']=='EGFR'])
-  output = open('%s/analyses/egf_survival.csv' % PANCANCER_DIR,'w')
-  output.write('Sample,Disease,EGFR,Death,Total_Size,Breakpoint_Edges,Oncogene,Status\n')
+  output = open('%s/analyses/egf_survival.%s.csv' % (PANCANCER_DIR, disease),'w')
+  output.write('Sample,Disease,EGFR,Death,Total_Size,Breakpoint_Edges,Oncogene,Status,Relapse\n')
   for k in keeper.keys():  
     res=keeper[k]
     tumor_type = res[key_map['WGS__sampleType']]
     disease_type = res[key_map['WGS__cases__project__project_id']]
+    relapse = "NA" if 'new_tumor_event_after_initial_treatment' not in res[key_map['meta']]['clinical_data'] else res[key_map['meta']]['clinical_data']['new_tumor_event_after_initial_treatment']
     if tumor_type != 'TP':
       continue
     out_dir = '%s/analyses/tumor/%s/min_cnv1/%s/'  % (PANCANCER_DIR, disease_type, res[key_map['outdir_basename']])      
@@ -205,23 +305,26 @@ def compute_egf_mortality(keeper, complete):
     summary_file = "%s/output/%s-MINCNV1_summary.txt" % (out_dir,res[key_map['Tag']])    
     if os.path.exists(summary_file):    
       amplicons = read_summary_file(summary_file)
-      output.write("%s,%s,%f,%d,%d,%d,%s,%s\n" % (res[key_map['WGS__patient_id']],
+      output.write("%s,%s,%f,%d,%d,%d,%s,%s,%s\n" % (res[key_map['WGS__patient_id']],
                                 disease_type,amp,  
                                 res[key_map['meta']]['clinical_data']['days_to_last_known_alive'],
                                 sum([int(a['TotalIntervalSize']) for a in amplicons.values()]),
                                 sum([int(a['#BreakpointEdges']) for a in amplicons.values()]),
                                 len([a for a in amplicons.values() if a['OncogenesAmplified'].strip() != ',']) != 
                                     0,
-                                res[key_map['meta']]['clinical_data']['vital_status'])
+                                res[key_map['meta']]['clinical_data']['vital_status'],
+                                relapse)
                                 )
     else:
-      output.write("%s,%s,%f,%d,%d,%d,%s,%s\n" % (res[key_map['WGS__patient_id']],
+      output.write("%s,%s,%f,%d,%d,%d,%s,%s,%s\n" % (res[key_map['WGS__patient_id']],
                                 disease_type,amp,  
                                 res[key_map['meta']]['clinical_data']['days_to_last_known_alive'],
                                 0,
                                 0,
                                 False,
-                                res[key_map['meta']]['clinical_data']['vital_status']))                                
+                                res[key_map['meta']]['clinical_data']['vital_status'],
+                                relapse)
+                                )
   output.close()
 
 def read_summary_file(summary_file):
@@ -447,7 +550,7 @@ def find_amplified_intervals(input,output,min_cnv=5,min_size=10000):
     if 2**float(res[4]) >= min_cnv and (int(res[2])-int(res[1]) >= min_size):
       out.write(line)
   out.close()
-  
+
 def collect_all_metadata_files():
   files_endpt = 'https://api.gdc.cancer.gov/files'
   filt = {"op":"and",
@@ -541,7 +644,7 @@ def collect_all_metadata_files():
   for hit in response.json()['data']['hits']:
     output.write('%s\t%s\t%s\t%s\t%s\t%s\t%s\n' % (hit['cases'][0]['project']['project_id'], hit['cases'][0]['submitter_id'], hit['cases'][0]['samples'][0]['sample_type'], hit['id'],hit['file_id'],hit['experimental_strategy'],hit['file_name']))
   output.close()  
-  
+
 def get_legacy_samples(file='/home/namphuon/data/dbGap/legacy.bam.json'):
   bams = json.load(open(bam_json_file))  
   samples = Set()
@@ -685,9 +788,10 @@ def load_fpkm(file,names=Set()):
   return fpkm
 
 
-#service = get_unauthorized_service(api='isb_cgc_tcga_api')
-#(data_map, key_map) = load_meta_file()
-#(complete, keeper) = get_rnaseq_bucket(data_map, service, key_map)
+service = get_unauthorized_service(api='isb_cgc_tcga_api')
+(data_map, key_map) = load_meta_file()
+(complete, keeper) = get_rnaseq_bucket(data_map, service, key_map)
+run_read_count(complete, disease='TCGA-GBM')
 #run_samples_python()
 #run_samples_python(file='/pedigree2/projects/namphuon/bin/perl/scripts/all_bam_cnv.csv')
 #compute_fpkm_cnv()
