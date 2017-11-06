@@ -34,17 +34,18 @@ def parse_args():
   return options
   
 def read_count(bam_file, amplicons, output_file):
-  bam = pysam.Samfile(bam_file, 'rb')  
+  bam = pysam.Samfile(bam_file, 'rb')
+  prefix = pancancer.prefix_chr(bam)
   output = open(output_file,'w')
   for a in amplicons:
     counted = {}
     idx = 0
-    for read in bam.fetch(a.chrom, a.start, a.end):
+    for read in bam.fetch(a.chrom if prefix else a.chrom.replace('chr',""), a.start, a.end):
       if not read.is_unmapped:
         foo = counted.setdefault(read.qname,{}).setdefault(read.is_read1, read)
         idx+=1
     output.write('%s,%s:%d-%d,%s,%d,%d\n' %
-                (a.info['sample'],a.chrom,a.start,a.end,a.info['id'],len(counted.keys()),idx))    
+                (a.info['sample'],a.chrom if prefix else a.chrom.replace('chr',""),a.start,a.end,a.info['id'],len(counted.keys()),idx))    
   output.close()
 
 if __name__ == '__main__': 

@@ -787,6 +787,9 @@ def load_fpkm(file,names=Set()):
     fpkm = dict([(res[0].split('.')[0],float(res[1])) for res in lines])
   return fpkm
 
+def prefix_chr(opened_bam_file):
+  chr_count = [i['SN'] for i in opened_bam_file.header['SQ'] if 'SN' in i and i['SN'].find('chr') != -1]
+  return len(chr_count) > 20  
 
 #service = get_unauthorized_service(api='isb_cgc_tcga_api')
 #(data_map, key_map) = load_meta_file()
