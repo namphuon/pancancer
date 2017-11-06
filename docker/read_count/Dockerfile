@@ -24,4 +24,4 @@ RUN pip install -U crcmod
 RUN pip install --upgrade google-api-python-client
 RUN pip install requests
 RUN ls
-RUN echo "PANCANCER=/home/" >> ~/.bashrc
+ENV PANCANCER=/home
