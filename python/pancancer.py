@@ -230,8 +230,8 @@ def read_read_counts(complete, amplicons, disease='TCGA-GBM'):
       
     #Av. read from amplicon region in non-amp samples
     idx = 0
-    for s in samples_not_amplicon:
-      total_mapped_read = read_counts[s][1]['flag
+#    for s in samples_not_amplicon:
+#      total_mapped_read = read_counts[s][1]['flag
 
 def read_readcounts(read_file):
   read_count_intervals = {}
