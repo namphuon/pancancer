@@ -42,7 +42,7 @@ def read_count(bam_file, amplicons, output_file):
     idx = 0
     for read in bam.fetch(a.chrom if prefix else a.chrom.replace('chr',""), a.start, a.end):
       if not read.is_unmapped:
-        foo = counted.setdefault(read.qname,{}).setdefault(read.is_read1, read)
+        foo = counted.setdefault(read.qname,"")
         idx+=1
     output.write('%s,%s:%d-%d,%s,%d,%d\n' %
                 (a.info['sample'],a.chrom if prefix else a.chrom.replace('chr',""),a.start,a.end,a.info['id'],len(counted.keys()),idx))    
