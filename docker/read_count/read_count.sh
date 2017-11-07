@@ -1,0 +1,2 @@
+python /home/read_count.py -b ${BAM_FILE} -s ${SEGMENT_FILE} -f ${OUTPUT_DIR}/flagstat.csv -o ${OUTPUT_DIR}/read_counts.csv > ${LOG_FILE} 2>&1
+samtools flagstat ${BAM_FILE} > ${OUTPUT_DIR}/flagstat.csv
