@@ -3,7 +3,8 @@ FROM ubuntu
 
 # Set the working directory to /app
 WORKDIR /home/
-ADD *.py /home/
+ADD *.gz /home/
+ADD wgs_pipeline.sh /home/
 RUN mkdir -p /home/output/
 RUN mkdir -p /home/input/
 #Download libraries for AA
@@ -19,9 +20,13 @@ RUN echo "deb http://packages.cloud.google.com/apt cloud-sdk-stretch main" >  /e
 RUN curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
 RUN apt-get update && apt-get install google-cloud-sdk -y
 RUN apt-get install gcc python-dev python-setuptools -y
+RUN apt-get install libncurses5-dev libncursesw5-dev -y
+RUN apt-get install r-base r-base-dev -y
 RUN easy_install -U pip
 RUN pip install -U crcmod
 RUN pip install --upgrade google-api-python-client
 RUN pip install requests
-RUN ls
+RUN cd /home/NBICseq-norm_v0.2.4 && make clean && make
+RUN cd /home/NBICseq-seg_v0.7.2 && make clean && make
+RUN cd /home/samtools-0.1.7a_getUnique-0.1.3 && make clean && make
 ENV PANCANCER=/home

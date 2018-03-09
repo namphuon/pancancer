@@ -13,9 +13,10 @@ import copy,math,bisect
 from sets import Set
 from collections import Counter
 from argparse import ArgumentParser
-#from googleapiclient.discovery import build
-#import httplib2
+from googleapiclient.discovery import build
+import httplib2
 import pprint
+from viral import overlap
 
 chrs = ["%d" % x for x in xrange(1,23)]
 chrs.extend(['Y','X'])
@@ -34,14 +35,299 @@ CLIENT_SECRET = 'To_WJH7-1V-TofhNGcEqmEYi'
 EMAIL_SCOPE = 'https://www.googleapis.com/auth/userinfo.email'
 # where a default credentials file will be stored for use by the endpoints
 DEFAULT_STORAGE_FILE = os.path.join(os.path.expanduser("~"), '.isb_credentials')
-diseases = [d for d in os.listdir('%s/analyses/tumor' % PANCANCER_DIR) if d.find('TCGA') != -1]
-diseases.sort()
+#diseases = [d for d in os.listdir('%s/analyses/tumor' % PANCANCER_DIR) if d.find('TCGA') != -1]
+#diseases.sort()
 
+def collect_all_metadata_files():
+  files_endpt = 'https://api.gdc.cancer.gov/v0/legacy/files'
+  filt = {"op":"=",
+          "content":{
+            "field": "file_name",
+            "value": filename
+            }}
+  params = {'filters':json.dumps(filt),'size':100000, 'fields':"cases.project.project_id,cases.samples.sample_type,analysis.workflow_type,cases.samples.submitter_id,cases.samples.sample_id,file_id,file_name,cases.submitter_id"}
+  # requests URL-encodes automatically  
+  response = requests.get(files_endpt, params = params)  
+          
+          
+          
+  filt = {"op":"and",
+            "content":[
+            {"op":"=",
+              "content":{
+                  "field": "data_type",
+                  "value": "Masked Copy Number Segment"
+              }}
+            ,
+            {"op":"or",
+              "content":[
+              {"op":"=",
+                "content":{
+                    "field": "cases.samples.sample_type",
+                    "value": "*umor*"
+                }},
+              {"op":"=",
+                "content":{
+                    "field": "cases.samples.sample_type",
+                    "value": "*ancer*"
+                }},                
+              {"op":"=",
+                "content":{
+                    "field": "cases.samples.sample_type",
+                    "value": "*static*"
+                }}]              
+            }
+            ]}                                 
+  params = {'filters':json.dumps(filt),'size':100000, 'fields':"cases.project.project_id,cases.samples.sample_type,analysis.workflow_type,cases.samples.submitter_id,cases.samples.sample_id,file_id,file_name,cases.submitter_id"}
+  # requests URL-encodes automatically
+  
+  response = requests.get(files_endpt, params = params)  
+
+
+def prepare_files():
+  diseases = {}
+  for d in data_map.keys():
+    res = data_map[d]
+    disease_type = res[key_map['WGS__cases__project__project_id']]
+    tumor_type = res[key_map['WGS__sampleType']]
+    if tumor_type != 'TP' and tumor_type != 'TB' and tumor_type != 'TR':
+      continue
+    foo = diseases.setdefault(disease_type,{}).setdefault(d,res)        
+  total = 0
+  
+  for disease in diseases.keys():  
+    if disease in ['TCGA-LAML','TCGA-READ','TCGA-THCA']:
+      continue
+    wgs = open('%s/scripts/wgs.%s.tsv' % (PANCANCER_DIR, disease),'w')
+    wgs.write('--env SAMPLE_ID\t--env TYPE\t--output-recursive OUTPUT_DIR\t--input BAM\t--input BAI\t--input BED\n')
+    rna = open('%s/scripts/rna.%s.tsv' % (PANCANCER_DIR, disease),'w')
+    rna.write('--env SAMPLE_ID\t--env TYPE\t--output-recursive OUTPUT_DIR\t--input BAM\t--input BAI\t--input BED\n')
+      
+    for k in diseases[disease].keys():
+      if k not in keeper:
+        continue
+      res=data_map[k]
+      tumor_type = res[key_map['WGS__sampleType']]
+      disease_type = res[key_map['WGS__cases__project__project_id']]
+      in_dir = "%s/analyses/final/TUMOR-WGS-GWSNP6NOCNV/RAW/%s/output" % (PANCANCER_DIR,res[1].split('/')[-1])
+      prefix = "analyses/final/TUMOR-WGS-GWSNP6NOCNV/RAW/%s/output" % res[1].split('/')[-1]
+      if tumor_type != 'TP' and tumor_type != 'TR' and tumor_type != 'TB':
+        continue
+      elif res[key_map['aa_finished']] == 'failed':
+        continue      
+      else:
+        print k      
+      disease_type = res[key_map['WGS__cases__project__project_id']]
+      gsbucket = "gs://aa-data-repo/%s" % prefix    
+      tumor_type = res[key_map['WGS__sampleType']]
+      prefix = "%s-MINCNV1" % res[key_map['Tag']]
+      disk_size = int(float(res[key_map['WGS__file_size']])*2.5)
+      wgs.write('%s\t%s\t%s\t%s\t%s\t%s\n' % (k,'WGS',gsbucket,res[key_map['WGS__file_gcs_url']],res[key_map['WGS__file_gcs_url']]+".bai","gs://aa-data-repo/metadata/%s.bed" % disease))
+      rna.write('%s\t%s\t%s\t%s\t%s\t%s\n' % (k,'RNA',gsbucket,keeper[k][0],keeper[k][0]+".bai","gs://aa-data-repo/metadata/%s.bed" % disease))
+    wgs.close()
+    rna.close()
+
+def collect_cyclics():
+  #Start with WGS files
+  diseases = {}
+  for d in data_map.keys():
+    res = data_map[d]
+    disease_type = res[key_map['WGS__cases__project__project_id']]
+    tumor_type = res[key_map['WGS__sampleType']]
+    if tumor_type != 'TP' and tumor_type != 'TB' and tumor_type != 'TR':
+      continue
+    foo = diseases.setdefault(disease_type,{}).setdefault(d,res)
+  
+  for disease in diseases.keys():
+    if disease == 'TCGA-GBM' or disease == 'TCGA-LGG':
+      continue
+    if disease == 'TCGA-LUAD' or disease == 'TCGA-LUSC':
+      continue
+    cyclics = hg19.interval_list()
+    for d in diseases[disease].keys():
+      res = data_map[d]
+      in_dir = "%s/analyses/final/TUMOR-WGS-GWSNP6NOCNV/RAW/%s/output" % (PANCANCER_DIR,res[1].split('/')[-1])    
+      amplicon = load_amplicon_file_final(res)
+      if amplicon is None:
+        continue
+      amp_list = hg19.interval_list([i for a in amplicon if a !='amplicons' and valid_cycle(amplicon[a]) for i in amplicon[a]['interval_map'].values()]) 
+      if len(amp_list) != 0:
+        hits = [h for h in cyclics.intersection(amp_list)]
+        if len(hits) > 0:
+          for h in hits:            
+            h[0].start = min(h[0].start,h[1].start)
+            h[0].end = max(h[0].end,h[1].end)
+          cyclics = reduce_regions(cyclics)
+        else:
+          cyclics.extend(amp_list)
+          cyclics.sort()
+    output = open("%s/analyses/final/%s.bed" % (PANCANCER_DIR,disease), 'w')
+    for c in cyclics:
+      output.write('%s\t%d\t%d\n' % (c.chrom, c.start, c.end))    
+    output.close()
+    local_dir = res[key_map['local_outdir']].split('AA_RAWOUT/')[1]
+    bucket_dir = "gs://aa-data-repo/analyses/tumor/%s" % local_dir  
+    
+
+def rna_wgs():
+  foo = dict([(v,k) for (k,v) in key_map.items()])
+  [(foo[i],res[i]) for i in xrange(0,len(res)) if res[i].find('gs')!=-1]
+  disease='TCGA-GBM'
+  idx = 0
+  region = hg19.interval('chr7',53872043,56632042)
+  out = open('%s/scripts/rna.flagstat.sh' % PANCANCER_DIR, 'w')
+  for s in sample_map[disease]:
+    res = sample_map[disease][s]['tumor']['res']
+    name = res[0]
+    local_dir = res[key_map['local_outdir']].split('AA_RAWOUT/')[1]
+    bucket_dir = "gs://aa-data-repo/analyses/tumor/%s" % local_dir    
+    if name not in complete:
+      continue
+    rna_bam_file = complete[name][key_map['rnaseq_gsc']]
+    wgs_bam_file = complete[name][key_map['bam_file']]
+    out_dir = "%s/analyses/tumor/%s" % (PANCANCER_DIR,local_dir)
+    #os.system('gsutil cp %s/flagstat* %s' % (bucket_dir, out_dir))
+    wgs_flag_file = "%s/flagstat.wgs.csv" % "%s/analyses/tumor/%s" % (PANCANCER_DIR,local_dir)
+    if not os.path.exists(wgs_flag_file):
+      out.write("""
+  dsub \\
+  --project aa-test-175718 \\
+  --zones "us-*" \\
+  --logging %s/logging/ \\
+  --input BAM=%s \\
+  --disk-size 700 \\
+  --output FLAG=%s/flagstat.wgs.csv \\
+  --image quay.io/cancercollaboratory/dockstore-tool-samtools-index \\
+  --command 'samtools flagstat ${BAM} > ${FLAG}'
+  """ % (bucket_dir,wgs_bam_file,bucket_dir) + '\n')
+  out.close()
+    
+  region = hg19.interval('7',53872043,56632042)
+  out = open('%s/scripts/egfr.sh' % PANCANCER_DIR, 'w')
+  for s in sample_map[disease]:
+    res = sample_map[disease][s]['tumor']['res']
+    name = res[0]
+    local_dir = res[key_map['local_outdir']].split('AA_RAWOUT/')[1]
+    bucket_dir = "gs://aa-data-repo/analyses/tumor/%s" % local_dir  
+    if name not in complete:
+      continue
+    rna_bam_file = complete[name][key_map['rnaseq_gsc']]
+    wgs_bam_file = complete[name][key_map['bam_file']]
+    out_dir = "%s/analyses/tumor/%s" % (PANCANCER_DIR,local_dir)
+    out_rna_bam = "%s/egfr.rna.bam" % "%s/analyses/tumor/%s" % (PANCANCER_DIR,local_dir)
+    out_wgs_bam = "%s/egfr.wgs.bam" % "%s/analyses/tumor/%s" % (PANCANCER_DIR,local_dir)
+    if not os.path.exists(out_rna_bam) or os.path.getsize(out_rna_bam) < 5000:
+      out.write('samtools view -hb %s %s:%d-%d > %s\n' % (rna_bam_file, region.chrom, region.start, region.end, out_rna_bam))
+    if not os.path.exists(out_rna_bam+'.bai'):
+      out.write('samtools index %s\n' % out_rna_bam)
+    if not os.path.exists(out_wgs_bam) or os.path.getsize(out_wgs_bam) < 5000:
+      out.write('samtools view -hb %s %s:%d-%d > %s\n' % (wgs_bam_file, region.chrom, region.start, region.end, out_wgs_bam))
+    if not os.path.exists(out_wgs_bam+'.bai'):
+      out.write('samtools index %s\n' % out_wgs_bam)      
+  out.close() 
+  #out = open('%s/analyses/egfr.coverage.csv' % PANCANCER_DIR, 'w') 
+  #out.write('Sample,Type,Position,Depth\n')
+  meta = open('%s/analyses/egfr.meta.csv' % PANCANCER_DIR, 'w') 
+  meta.write('Sample,Type,ecDNA,Coverage\n')
+  for s in sample_map[disease]:
+    out = open('%s/analyses/egfr.coverage.csv.%s' % (PANCANCER_DIR,s), 'w') 
+    res = sample_map[disease][s]['tumor']['res']
+    name = res[0]
+    local_dir = res[key_map['local_outdir']].split('AA_RAWOUT/')[1]
+    bucket_dir = "gs://aa-data-repo/analyses/tumor/%s" % local_dir  
+    if name not in complete:
+      continue
+    rna_bam_file = "%s/egfr.rna.bam" % "%s/analyses/tumor/%s" % (PANCANCER_DIR,local_dir)
+    wgs_bam_file = "%s/egfr.wgs.bam" % "%s/analyses/tumor/%s" % (PANCANCER_DIR,local_dir)
+    rna_flag_file = "%s/flagstat.rna.csv" % "%s/analyses/tumor/%s" % (PANCANCER_DIR,local_dir)
+    wgs_flag_file = "%s/flagstat.wgs.csv" % "%s/analyses/tumor/%s" % (PANCANCER_DIR,local_dir)
+    all_map = load_amplicon_file(complete[name])
+    segs = hg19.interval_list()
+    for a1 in [x1 for x1 in all_map.keys() if x1 != 'amplicons']:
+      if valid_cycle(all_map[a1], threshold = 10000):        
+        [segs.append(s1) for s1 in all_map[a1]['segment_map'].values()]
+    segs.sort()      
+    for s1 in segs:
+      s1.chrom = '7'
+    ecDNA = len(segs.intersection([region])) != 0
+    rna_flag = read_samtools_flagstat(rna_flag_file)
+    if not os.path.exists(wgs_flag_file) or not os.path.exists(wgs_bam_file) or not os.path.exists(rna_bam_file) or not os.path.exists(rna_flag_file):
+      print "Missing %s" %s
+      print "%s %s %s %s" % (not os.path.exists(wgs_flag_file), not os.path.exists(wgs_bam_file), not os.path.exists(rna_flag_file), not os.path.exists(rna_bam_file))
+      continue
+    wgs_flag = read_samtools_flagstat(wgs_flag_file)
+    #Estimate sequence length
+    rna_bam = pysam.Samfile(rna_bam_file, 'rb')
+    wgs_bam = pysam.Samfile(wgs_bam_file, 'rb')
+    rna_length = 0
+    read_total = 0
+    for read in rna_bam.fetch():
+      if read.is_secondary or read.is_supplementary or read.is_unmapped:
+        continue
+      read_total+=1
+      rna_length+=read.query_length
+      if read_total > 10000:
+        break
+    rna_length/=read_total   
+    wgs_length = 0
+    read_total = 0     
+    for read in wgs_bam.fetch():
+      if read.is_secondary or read.is_supplementary or read.is_unmapped:
+        continue
+      read_total+=1
+      wgs_length+=read.query_length
+      if read_total > 10000:
+        break
+    wgs_length/=read_total    
+    #Genome size    
+    wgs_coverage = (wgs_length*wgs_flag['total_mapped'][0])/sum(wgs_bam.lengths)    
+    rna_coverage = (rna_length*rna_flag['total_mapped'][0])/sum(wgs_bam.lengths)
+    
+    meta.write('%s,%s,%s,%f\n' %(s,'wgs',ecDNA,wgs_coverage))
+    meta.write('%s,%s,%s,%f\n' %(s,'rna',ecDNA,rna_coverage))
+    #Now compute wgs coverage
+    chrom = '7' if '7' in wgs_bam.references else 'chr7'
+    curr_pos_idx = 0
+    curr_depth = 0
+    prev_pos = -1
+    for pileupcolumn in wgs_bam.pileup(chrom, region.start, region.end,stepper='all'):
+      if prev_pos == -1:
+        prev_pos = pileupcolumn.pos
+      curr_depth+=pileupcolumn.n
+      if pileupcolumn.pos - prev_pos > 500:
+        out.write("%s,%s,%d,%f\n" % (s,'wgs',int((pileupcolumn.pos+prev_pos)/2), curr_depth / (pileupcolumn.pos - prev_pos)))
+        prev_pos = pileupcolumn.pos
+        curr_depth = 0
+    #Now compute rnaseq coverage
+    chrom = '7' if '7' in rna_bam.references else 'chr7'
+    curr_pos_idx = 0
+    curr_depth = 0
+    prev_pos = -1
+    for pileupcolumn in rna_bam.pileup(chrom, region.start, region.end,stepper='all'):
+      if prev_pos == -1:
+        prev_pos = pileupcolumn.pos
+      curr_depth+=pileupcolumn.n
+      if pileupcolumn.pos - prev_pos > 500:
+        out.write("%s,%s,%d,%f\n" % (s,'rna',int((pileupcolumn.pos+prev_pos)/2), curr_depth / (pileupcolumn.pos - prev_pos)))
+        prev_pos = pileupcolumn.pos
+        curr_depth = 0  
+    out.close()            
+  meta.close()
+      
+def samples_file():
+  out = open('%s/metadata/matched.csv' % (PANCANCER_DIR),'w')
+  [out.write("%s\n" % s)  for s in samples]
+  out.close()
+  
+
+  
 def compute_egf_mortality():
   output = open('%s/analyses/survival.csv' % (PANCANCER_DIR),'w')
   output.write('Sample,Disease,Death,Status,Relapse\n')
   for s in samples:
     disease = samples_data[s]['disease']    
+    res = sample_map[disease][s]['tumor']['res']    
+    relapse = "NA" if 'new_tumor_event_after_initial_treatment' not in res[key_map['meta']]['clinical_data'] else res[key_map['meta']]['clinical_data']['new_tumor_event_after_initial_treatment']
     
   for k in keeper.keys():
     res=keeper[k]
@@ -102,9 +388,6 @@ def reduce_regions(regions):
     else:
       new_region.append(next)
   return new_region
-  
-def overlap(min1, max1, min2, max2):
-  return [max(min1, min2), min(max1, max2) ]
 
 def valid_cycle(amplicon, threshold = 10000):
   is_cyclic = False
@@ -114,19 +397,25 @@ def valid_cycle(amplicon, threshold = 10000):
   return is_cyclic
 
 def check_heatmap():
-  res1=samples_data['TCGA-44-6779']['TP']['res']
-  res2=samples_data['TCGA-AX-A2HD']['TP']['res']
+  res1=samples_data['TCGA-LN-A4A4']['TP']['res']
+  res2=samples_data['TCGA-LN-A4A4']['NB']['res']
   out_dir1 = '%s/analyses/tumor/%s/min_cnv1/%s/'  % (PANCANCER_DIR, res1[key_map['WGS__cases__project__project_id']], res1[key_map['outdir_basename']])  
   out_dir2 = '%s/analyses/tumor/%s/min_cnv1/%s/'  % (PANCANCER_DIR, res2[key_map['WGS__cases__project__project_id']], res2[key_map['outdir_basename']])
-  amplicon1 = load_amplicon_file(gbm1)
-  amplicon2 = load_amplicon_file(gbm2)
-  amp_list1 = hg19.interval_list([i for a in amplicon1 if a !='amplicons' and valid_cycle(amplicon1[a]) for i in amplicon1[a]['interval_map'].values()]) if amplicon1 is not None else hg19.interval_list()
+  amplicon1 = load_amplicon_file(res1)
+  amplicon2 = load_amplicon_file(res2)
+#   amp_list1 = hg19.interval_list([i for a in amplicon1 if a !='amplicons' and valid_cycle(amplicon1[a]) for i in amplicon1[a]['interval_map'].values()]) if amplicon1 is not None else hg19.interval_list()
+#   amp_list1.sort()
+#   amp_list2 = hg19.interval_list([i for a in amplicon2 if a !='amplicons' and valid_cycle(amplicon2[a]) for i in amplicon2[a]['interval_map'].values()]) if amplicon1 is not None else hg19.interval_list()
+#   amp_list2.sort()  
+  amp_list1 = hg19.interval_list([i for a in amplicon1 if a !='amplicons' for i in amplicon1[a]['interval_map'].values()]) if amplicon1 is not None else hg19.interval_list()
   amp_list1.sort()
-  amp_list2 = hg19.interval_list([i for a in amplicon2 if a !='amplicons' and valid_cycle(amplicon2[a]) for i in amplicon2[a]['interval_map'].values()]) if amplicon1 is not None else hg19.interval_list()
+  amp_list2 = hg19.interval_list([i for a in amplicon2 if a !='amplicons' for i in amplicon2[a]['interval_map'].values()]) if amplicon1 is not None else hg19.interval_list()
   amp_list2.sort()  
-  cnv1 =  hg19.interval_list([h for h in load_cnv_file('%s/%s.hg19.bed' % (out_dir1,gbm1[key_map['WGS__patient_id']])) if h.info['Amplification'] >= 2])
+  [(str(h[0]),str(h[1])) for h in amp_list1.intersection(amp_list2)]
+
+  cnv1 =  hg19.interval_list([h for h in load_cnv_file('%s/%s.hg19.bed' % (out_dir1,res1[key_map['WGS__patient_id']])) if h.info['Amplification'] >= 2])
   cnv1.sort()
-  cnv2 =  hg19.interval_list([h for h in load_cnv_file('%s/%s.hg19.bed' % (out_dir2,gbm2[key_map['WGS__patient_id']])) if h.info['Amplification'] >= 2])
+  cnv2 =  hg19.interval_list([h for h in load_cnv_file('%s/%s.hg19.bed' % (out_dir2,res2[key_map['WGS__patient_id']])) if h.info['Amplification'] >= 2])
   cnv2.sort()
   
   overlaps = [h for h in cnv1.intersection(cnv2)]
@@ -151,6 +440,10 @@ def check_heatmap():
   aa_shared = sum([sum([o1.end-o1.start for o1 in o[0].info['coverage']])+sum([o2.end-o2.start for o2 in o[1].info['coverage']]) for o in aa_overlap])
   aa_union = sum([(h.end-h.start) for h in amp_list1])+sum([(h.end-h.start) for h in amp_list2])
 
+# res1=samples_data['TCGA-BR-6852']['TP']['res']
+# res2=samples_data['TCGA-L5-A8NN']['TP']['res']
+
+
 def compute_jaccard(res1, res2):
   out_dir1 = '%s/analyses/tumor/%s/min_cnv1/%s/'  % (PANCANCER_DIR, res1[key_map['WGS__cases__project__project_id']], res1[key_map['outdir_basename']])  
   out_dir2 = '%s/analyses/tumor/%s/min_cnv1/%s/'  % (PANCANCER_DIR, res2[key_map['WGS__cases__project__project_id']], res2[key_map['outdir_basename']])
@@ -165,43 +458,28 @@ def compute_jaccard(res1, res2):
   cnv2 =  hg19.interval_list([h for h in load_cnv_file('%s/%s.hg19.bed' % (out_dir2,res2[key_map['WGS__patient_id']])) if h.info['Amplification'] >= 2 and (h.end-h.start) > 10000]) if os.path.exists('%s/%s.hg19.bed' % (out_dir2,res2[key_map['WGS__patient_id']])) else hg19.interval_list()
   cnv2.sort()  
   overlaps = [h for h in cnv1.intersection(cnv2)]
+  regions = hg19.interval_list()
   for o in overlaps:
     region = overlap(o[0].start,o[0].end,o[1].start,o[1].end)
     region = hg19.interval(o[0].chrom, region[0],region[1])
-    o[0].info.setdefault('coverage',[]).append(region)
-    o[1].info.setdefault('coverage',[]).append(region)
+    regions.append(region)
   #shared = sum([sum([o1.end-o1.start for o1 in o[0].info['coverage']])*o[0].info['Amplification']*2+sum([o2.end-o2.start for o2 in o[1].info['coverage']])*o[1].info['Amplification']*2 for o in overlaps])
   #union = sum([(h.end-h.start)*h.info['Amplification']*2 for h in cnv1])+sum([(h.end-h.start)*h.info['Amplification']*2 for h in cnv2])
-  s1 = []
-  foo = [s1.extend(o[0].info['coverage']) for o in overlaps]
-  s1.sort()
-  s1 = reduce_regions(hg19.interval_list(s1))
-  
-  s2 = []
-  foo = [s2.extend(o[1].info['coverage']) for o in overlaps]
-  s2.sort()
-  s2 = reduce_regions(hg19.interval_list(s2))
-  shared = sum([o1.end-o1.start for o1 in s1])+sum([o2.end-o2.start for o2 in s2])  
+  regions.sort()
+  regions = reduce_regions(regions)  
+  shared = sum([o1.end-o1.start for o1 in regions])
   #shared = sum([sum([o1.end-o1.start for o1 in o[0].info['coverage']])+sum([o2.end-o2.start for o2 in o[1].info['coverage']]) for o in overlaps])
-  union = sum([(h.end-h.start) for h in cnv1])+sum([(h.end-h.start) for h in cnv2])
+  union = sum([(h.end-h.start) for h in cnv1])+sum([(h.end-h.start) for h in cnv2])-shared
   aa_overlap = [h for h in amp_list1.intersection(amp_list2)]
+  regions = hg19.interval_list()
   for o in aa_overlap:
     region = overlap(o[0].start,o[0].end,o[1].start,o[1].end)
     region = hg19.interval(o[0].chrom, region[0],region[1])
-    o[0].info.setdefault('coverage',[]).append(region)
-    o[1].info.setdefault('coverage',[]).append(region)
-  #aa_shared = sum([sum([o1.end-o1.start for o1 in o[0].info['coverage']])+sum([o2.end-o2.start for o2 in o[1].info['coverage']]) for o in aa_overlap])
-  s1 = []
-  foo = [s1.extend(o[0].info['coverage']) for o in aa_overlap]
-  s1.sort()
-  s1 = reduce_regions(hg19.interval_list(s1))
-  
-  s2 = []
-  foo = [s2.extend(o[1].info['coverage']) for o in aa_overlap]
-  s2.sort()
-  s2 = reduce_regions(hg19.interval_list(s2))
-  aa_shared = sum([o1.end-o1.start for o1 in s1])+sum([o2.end-o2.start for o2 in s2])  
-  aa_union = sum([(h.end-h.start) for h in amp_list1])+sum([(h.end-h.start) for h in amp_list2])
+    regions.append(region)
+  regions.sort()
+  regions = reduce_regions(regions)  
+  aa_shared = sum([o1.end-o1.start for o1 in regions])
+  aa_union = sum([(h.end-h.start) for h in amp_list1])+sum([(h.end-h.start) for h in amp_list2])-aa_shared
   return (shared/union if union != 0 else -1, aa_shared/aa_union  if aa_union != 0 else -1)
 
 def find_matched_normal_tumor():
@@ -1157,6 +1435,18 @@ def download_fpkm_values(complete, key_map):
     os.chdir(PANCANCER_DIR)
     os.system('rm -rf %s' % path)
 
+def load_meta_file_final():
+  data_map = dict()
+  file="%s/analyses/final/file_map_for_AA_Job_Control-min_cnv1.txt" % (PANCANCER_DIR)
+  input = open(file, 'r')
+  header=input.next().split('\t')
+  idx = -1
+  key_map = dict([(header[i].replace('"',""),i) for i in xrange(0,len(header))])
+  for i in input:
+    res = [r.replace('"','') for r in i.strip().split('\t')]
+    foo = data_map.setdefault(res[0],res)
+  return (data_map, key_map)
+
 def load_meta_file():
   data_map = dict()
   for disease in [d for d in os.listdir('%s/analyses/tumor' % PANCANCER_DIR) if d.find('TCGA') != -1]:
@@ -1267,6 +1557,26 @@ def get_rnaseq_bucket(data_map, service, key_map):
   print idx  
   return(complete,keeper)  
 
+def get_rnaseq_bucket_final(data_map, service, key_map):
+  keeper = dict()
+  for d in data_map.keys():
+    res = data_map[d]
+    sample_type = res[key_map['WGS__sampleType']]
+    if sample_type != 'TP' and sample_type != 'TR' and sample_type != 'TB':
+      continue
+    try:
+      hits = service.samples().cloud_storage_file_paths(sample_barcode=res[key_map['WGS__portion_id']][0:-3],experimental_strategy='RNA-Seq', data_type='Aligned Reads',genomic_build='HG19').execute() 
+      #hits = service.samples().cloud_storage_file_paths(sample_barcode='TCGA-CG-5734-01A',experimental_strategy='RNA-Seq', data_type='Aligned Reads',genomic_build='HG19',data_category='Raw sequencing data').execute()      
+    except:
+      continue
+    if hits['count'] >= 1:
+      keeper[d] = hits['cloud_storage_file_paths']
+    elif hits['count'] == 0:
+      continue
+    else:
+      break
+  return keeper
+
 def fix_cnv_file(cnv_file,output_file):
   os.system("awk '{print \"chr\"$2,$3,$4,$5,$6}' %s | tail -n +2 > %s.tmp" % (cnv_file, cnv_file))
   os.system('$WORK/programs/liftOver/liftOver %s.tmp $WORK/programs/liftOver/hg38ToHg19.over.chain %s %s.unmapped' % (cnv_file, output_file, output_file))
@@ -1306,6 +1616,29 @@ def read_cycle_file(cycle_file):
       cycle_map[cycle_name] = {'cycle':cycle,'copy_count':copy_count}
   input.close()
   return (segment_map, interval_map, cycle_map)    
+
+def load_amplicon_file_final(res, summary_file = None, prefix = "", out_dir = ""):
+  if summary_file == None:
+    disease_type = res[key_map['WGS__cases__project__project_id']]
+    out_dir = '%s/analyses/final/TUMOR-WGS-GWSNP6NOCNV/RAW/%s/output'  % (PANCANCER_DIR, res[1].split('/')[-1])
+    prefix = "%s-MINCNV1" % res[key_map['Tag']]
+    summary_file = "%s/%s_summary.txt" % (out_dir, prefix)
+  all_map = {}
+  if os.path.exists(summary_file):    
+    amps = read_summary_file(summary_file)
+    if amps is None:
+      return None
+  else:
+    return None
+  for (ai, a) in amps.items():
+    ints = a['Intervals'].split(',')
+    cycle_file = "%s/%s_amplicon%s_cycles.txt" % (out_dir,prefix,ai)
+    (segment_map, interval_map, cycle_map) = read_cycle_file(cycle_file)
+    all_map.setdefault(ai,{})['segment_map'] = segment_map
+    all_map.setdefault(ai,{})['interval_map'] = interval_map
+    all_map.setdefault(ai,{})['cycle_map'] = cycle_map
+  all_map['amplicons'] = amps
+  return all_map
 
 def load_amplicon_file(res, summary_file = None, prefix = "", out_dir = ""):
   if summary_file == None:
@@ -1493,8 +1826,12 @@ def compute_egf_mortality(keeper, complete, disease='TCGA-BRCA'):
 def read_summary_file(summary_file, cnv_file=None):
   input = open(summary_file,'r')
   amplicons = {}
-  line = input.next()
-  line = input.next()
+  line = next(input, None)
+  if line is None:
+    return None
+  line = next(input, None)
+  if line is None:
+    return None
   id = None
   for line in input:
     res = line.strip().split(' ')
@@ -2092,19 +2429,19 @@ def read_read_counts(index):
         fpkm = read_counts[current_sample][3][g[0].info['gene_id']]
         output.write('%s,%s,%s,%s,%s,%f,%f,%s\n' % (current_sample, disease, 
         g[0].info['gene_name'], g[0].info['gene_id'], structure_type, fpkm, cnv, oncogene))
-  output.close()    
-
+  output.close()
 
 #service = get_unauthorized_service(api='isb_cgc_tcga_api')
-(data_map, key_map) = load_meta_file()
+#(data_map, key_map) = load_meta_file()
 #(complete, keeper) = get_rnaseq_bucket(data_map, service, key_map)
 #pickle.dump( complete, open( "%s/analyses/complete.p" % PANCANCER_DIR, "wb" ) )
 #pickle.dump( keeper, open( "%s/analyses/keeper.p" % PANCANCER_DIR, "wb" ) )
+#download_fpkm_values(complete,key_map)
+#read_read_counts(index=int(sys.argv[1]))
+#find_matched_normal_tumor()
+(data_map, key_map) = load_meta_file_final()
 complete = pickle.load( open(  "%s/analyses/complete.p" % PANCANCER_DIR, "rb" ) )
 keeper = pickle.load( open(  "%s/analyses/keeper.p" % PANCANCER_DIR, "rb" ) )
-#download_fpkm_values(complete,key_map)
 ensembl = load_ensemble_genes()
 for h in hg19.oncogene_list:
   h.chrom = "chr%s" % h.chrom
-#read_read_counts(index=int(sys.argv[1]))
-find_matched_normal_tumor()
