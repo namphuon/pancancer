@@ -75,7 +75,7 @@ def get_cyclic_path(amplicon, threshold = 10000):
   for cycle in amplicon['cycle_map'].keys():
     length = sum([amplicon['segment_map'][s[0:-1]].end-amplicon['segment_map'][s[0:-1]].start for s in amplicon['cycle_map'][cycle]['cycle'] if s[0] != '0'])
     if (amplicon['cycle_map'][cycle]['cycle'][0][0] != '0' and length >= threshold):
-      paths.extend([amplicon['segment_map'][s[0]] for s in amplicon['cycle_map'][cycle]['cycle']])
+      paths.extend([amplicon['segment_map'][s[0:-1]] for s in amplicon['cycle_map'][cycle]['cycle']])
   return paths
 
 #Returns whether an amplicon has a cycle of at least 10kb
